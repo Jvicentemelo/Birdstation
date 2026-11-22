@@ -1,5 +1,7 @@
 #include "library.h"
 
+#include "covermatch.h"
+
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -146,30 +148,36 @@ bool Library::LoadCover(Game& g, SDL_Renderer* r) {
 namespace {
 struct Http {
   HINTERNET ses = nullptr, con = nullptr;
+  DWORD status = 0, err = 0;  // last HTTP status / Win32 error
   Http() {
     ses = WinHttpOpen(L"Birdstation/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
                       WINHTTP_NO_PROXY_BYPASS, 0);
     if (ses) {
-      WinHttpSetTimeouts(ses, 8000, 8000, 10000, 15000);
+      WinHttpSetTimeouts(ses, 10000, 10000, 15000, 30000);
       con = WinHttpConnect(ses, L"thumbnails.libretro.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
     }
+    if (!con) err = GetLastError();
   }
   ~Http() {
     if (con) WinHttpCloseHandle(con);
     if (ses) WinHttpCloseHandle(ses);
   }
-  bool Get(const std::wstring& path, std::vector<unsigned char>& out) {
+  bool Get(const std::string& path, std::vector<unsigned char>& out) {
     out.clear();
+    status = 0;
+    err = 0;
     if (!con) return false;
-    HINTERNET rq = WinHttpOpenRequest(con, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
+    std::wstring wpath(path.begin(), path.end());
+    HINTERNET rq = WinHttpOpenRequest(con, L"GET", wpath.c_str(), nullptr, WINHTTP_NO_REFERER,
                                       WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
-    if (!rq) return false;
+    if (!rq) { err = GetLastError(); return false; }
     bool ok = false;
     if (WinHttpSendRequest(rq, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
         WinHttpReceiveResponse(rq, nullptr)) {
       DWORD code = 0, sz = sizeof code;
       WinHttpQueryHeaders(rq, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
                           WINHTTP_HEADER_NAME_BY_INDEX, &code, &sz, WINHTTP_NO_HEADER_INDEX);
+      status = code;
       if (code == 200) {
         ok = true;
         for (;;) {
@@ -178,42 +186,28 @@ struct Http {
           size_t old = out.size();
           out.resize(old + avail);
           DWORD got = 0;
-          if (!WinHttpReadData(rq, out.data() + old, avail, &got)) { ok = false; break; }
+          if (!WinHttpReadData(rq, out.data() + old, avail, &got)) { err = GetLastError(); ok = false; break; }
           out.resize(old + got);
         }
       }
+    } else {
+      err = GetLastError();
     }
     WinHttpCloseHandle(rq);
-    return ok && out.size() > 64;
+    return ok && !out.empty();
   }
 };
 }  // namespace
 #endif
 
-static std::string UrlName(std::string name) {
-  // libretro-thumbnails replaces these characters with '_'
-  for (char& c : name)
-    if (std::string("&*/:`<>?\\|\"").find(c) != std::string::npos) c = '_';
-  std::string out;
-  static const char* hex = "0123456789ABCDEF";
-  for (unsigned char c : name) {
-    if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~' || c == '(' || c == ')' || c == '!')
-      out += char(c);
-    else { out += '%'; out += hex[c >> 4]; out += hex[c & 15]; }
-  }
-  return out;
+void Library::SetNote(const std::string& s) {
+  std::lock_guard<std::mutex> lk(mtx_);
+  note_ = s;
 }
 
-static std::string StripBrackets(const std::string& stem) {  // drop "[...]" dump tags only
-  std::string out;
-  int depth = 0;
-  for (char c : stem) {
-    if (c == '[') { ++depth; continue; }
-    if (c == ']') { if (depth) --depth; continue; }
-    if (!depth) out += c;
-  }
-  while (!out.empty() && out.back() == ' ') out.pop_back();
-  return out;
+std::string Library::Note() {
+  std::lock_guard<std::mutex> lk(mtx_);
+  return note_;
 }
 
 void Library::StartCoverDownload() {
@@ -232,7 +226,8 @@ void Library::StartCoverDownload() {
   dlDone_ = 0;
   dlFound_ = 0;
   dlCancel_ = false;
-  if (need.empty()) return;
+  if (need.empty()) { SetNote("Todos os jogos ja tem capa."); return; }
+  SetNote("");
   dlRunning_ = true;
   dlThread_ = std::thread(&Library::DownloadThread, this, std::move(need));
 }
@@ -247,27 +242,76 @@ void Library::DownloadThread(std::vector<std::string> stems) {
 #ifdef _WIN32
   std::error_code ec;
   fs::create_directories(P(coversDir_), ec);
+  std::ofstream log;
+  if (!logPath_.empty()) {
+    fs::create_directories(P(logPath_).parent_path(), ec);
+    log.open(P(logPath_), std::ios::trunc);
+  }
+  auto L = [&](const std::string& s) { if (log) log << s << "\n"; };
+
   Http http;
   const std::string base = "/Nintendo%20-%20Super%20Nintendo%20Entertainment%20System/Named_Boxarts/";
+  std::vector<unsigned char> data;
+
+  // 1) directory listing -> fuzzy matching by title
+  std::vector<covermatch::Entry> index;
+  if (http.Get(base, data)) {
+    index = covermatch::ParseIndex(std::string(data.begin(), data.end()));
+    L("Indice do servidor: " + std::to_string(index.size()) + " capas");
+  } else {
+    L("Nao foi possivel ler o indice (HTTP " + std::to_string(http.status) + ", erro Win32 " + std::to_string(http.err) + ")");
+  }
+  if (index.empty() && http.status == 0) {
+    SetNote("Sem acesso ao servidor de capas (erro " + std::to_string(http.err) + "). Verifique a internet/firewall.");
+  }
+
+  int missing = 0;
   for (const auto& stem : stems) {
     if (dlCancel_) break;
-    std::string clean = StripBrackets(stem);
-    std::vector<std::string> cands = {clean};
-    if (clean.find('(') == std::string::npos) cands.push_back(clean + " (USA)");
-    std::vector<unsigned char> data;
-    for (const auto& c : cands) {
-      std::string url = base + UrlName(c) + ".png";
-      if (http.Get(std::wstring(url.begin(), url.end()), data)) {
+    std::vector<std::string> paths;  // URL paths to try, best first
+    std::string matched;
+    int pick = index.empty() ? -1 : covermatch::Pick(index, stem);
+    if (pick >= 0) { paths.push_back(base + index[pick].href); matched = index[pick].name; }
+    // 2) fallbacks: exact name, then name + " (USA)"
+    std::string clean = stem;
+    for (size_t b; (b = clean.find('[')) != std::string::npos;) {
+      size_t e = clean.find(']', b);
+      clean.erase(b, e == std::string::npos ? std::string::npos : e - b + 1);
+    }
+    while (!clean.empty() && clean.back() == ' ') clean.pop_back();
+    paths.push_back(base + covermatch::UrlName(clean) + ".png");
+    if (clean.find('(') == std::string::npos) paths.push_back(base + covermatch::UrlName(clean + " (USA)") + ".png");
+
+    bool got = false;
+    for (const auto& pth : paths) {
+      if (dlCancel_) break;
+      if (http.Get(pth, data) && data.size() > 64) {
         std::ofstream f(P(coversDir_) / P(stem + ".png"), std::ios::binary | std::ios::trunc);
         f.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
+        bool wrote = bool(f);
         f.close();
-        ++dlFound_;
-        std::lock_guard<std::mutex> lk(mtx_);
-        ready_.push_back(stem);
+        if (wrote) {
+          got = true;
+          ++dlFound_;
+          L("OK     " + stem + (matched.empty() ? "" : "  ->  " + matched));
+          std::lock_guard<std::mutex> lk(mtx_);
+          ready_.push_back(stem);
+        } else {
+          L("ERRO   nao foi possivel gravar " + (P(coversDir_) / P(stem + ".png")).u8string());
+        }
         break;
       }
     }
+    if (!got && !dlCancel_) {
+      ++missing;
+      L("FALTA  " + stem + "  (HTTP " + std::to_string(http.status) + ", erro " + std::to_string(http.err) + ")");
+    }
     ++dlDone_;
+  }
+  dlMissing_ = missing;
+  if (Note().empty()) {
+    SetNote(std::to_string(dlFound_.load()) + " capa(s) baixada(s)" +
+            (missing ? ", " + std::to_string(missing) + " nao encontrada(s) (veja config\\covers.log)" : "."));
   }
 #else
   (void)stems;

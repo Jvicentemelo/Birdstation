@@ -97,6 +97,7 @@ bool App::Init(int argc, char** argv) {
     fs::create_directories(P(*d), ec);
   fs::create_directories(P(Join(base_, "config")), ec);
   lib_.SetCoversDir(coversDir_);
+  lib_.SetLogPath(Join(Join(base_, "config"), "covers.log"));
   cfg_.Load(configPath_);
 
   float ddpi = 96.f;
@@ -643,6 +644,8 @@ void App::DrawLibrary() {
     ImGui::TextDisabled("Baixando capas %d/%d (%d ok)", lib_.DlDone(), lib_.DlTotal(), lib_.DlFound());
   } else {
     if (ImGui::Button("Baixar capas")) lib_.StartCoverDownload();
+    const std::string note = lib_.Note();
+    if (!note.empty()) { ImGui::SameLine(); ImGui::TextDisabled("%s", note.c_str()); }
   }
   ImGui::SameLine();
   if (ImGui::Button("Controles")) showControls_ = true;

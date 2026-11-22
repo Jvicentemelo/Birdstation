@@ -33,6 +33,9 @@ public:
   void FreeTextures();
 
   // Downloads missing box art from the libretro-thumbnails server in a background thread.
+  void SetLogPath(std::string p) { logPath_ = std::move(p); }
+  std::string Note();  // last download result / error message
+  int DlMissing() const { return dlMissing_; }
   void StartCoverDownload();
   void StopCoverDownload();
   bool Downloading() const { return dlRunning_; }
@@ -45,11 +48,13 @@ public:
 private:
   void DownloadThread(std::vector<std::string> stems);
 
-  std::string coversDir_;
+  void SetNote(const std::string& s);
+
+  std::string coversDir_, logPath_, note_;
   std::vector<Game> games_;
   std::thread dlThread_;
   std::atomic<bool> dlRunning_{false}, dlCancel_{false};
-  std::atomic<int> dlDone_{0}, dlTotal_{0}, dlFound_{0};
+  std::atomic<int> dlDone_{0}, dlTotal_{0}, dlFound_{0}, dlMissing_{0};
   std::mutex mtx_;
   std::vector<std::string> ready_;  // stems whose cover file just arrived
 };

@@ -40,7 +40,8 @@ set(BS_SOURCES
   src/core.cpp
   src/config.cpp
   src/input.cpp
-  src/library.cpp)
+  src/library.cpp
+  src/covermatch.cpp)
 
 if(WIN32)
   list(APPEND BS_SOURCES resources/birdstation.rc)

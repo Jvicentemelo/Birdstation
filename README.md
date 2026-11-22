@@ -7,7 +7,7 @@ Frontend de **Super Nintendo (SNES)** para Windows, com biblioteca de jogos em g
 núcleo **Snes9x** (via libretro).
 
 * Biblioteca com **capas**, busca, zoom das capas, navegação por teclado e gamepad
-* **Download automático de capas** (libretro-thumbnails) ou capas próprias
+* **Download automático de capas** (libretro-thumbnails, com busca pelo título, então nomes como `Jogo (U) [!]` também funcionam; resultado em `config\covers.log`) ou capas próprias
 * **Gamepad via SDL2** (Xbox, DualShock/DualSense, Switch Pro, etc.) com hot-plug, 2 jogadores
 * **Remapeamento** de teclado e gamepad (janela *Controles*)
 * **Save states** em 10 slots por jogo + salvamento automático da SRAM (save da bateria)
