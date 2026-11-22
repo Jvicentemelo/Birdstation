@@ -52,7 +52,7 @@ O segundo gamepad controla o Jogador 2.
 
 | Tecla | Ação |
 |---|---|
-| F5 / F7 | Salvar / carregar estado no slot atual |
+| F5 / F7 (gamepad: R2 / L2) | Salvar / carregar estado no slot atual |
 | F2 / F3 | Slot anterior / próximo (1–10) |
 | F10 | Reiniciar |
 | P | Pausar |

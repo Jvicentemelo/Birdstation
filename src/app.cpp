@@ -218,6 +218,14 @@ void App::Run() {
   while (running_) {
     SDL_Event e;
     while (SDL_PollEvent(&e)) HandleEvent(e);
+    input_.Update();
+    if (mode_ == Mode::Playing && !input_.Capturing() && !showControls_ && !showSettings_) {
+      if (input_.ConsumeSaveTrigger()) SaveStateSlot();   // R2
+      if (input_.ConsumeLoadTrigger()) LoadStateSlot();   // L2
+    } else {
+      input_.ConsumeSaveTrigger();
+      input_.ConsumeLoadTrigger();
+    }
     if (mode_ == Mode::Playing) RunEmulation();
     Render();
     if (!pendingRom_.empty()) {
@@ -392,7 +400,7 @@ bool App::Launch(const std::string& romPath) {
   lastSramSave_ = SDL_GetTicks();
   input_.ClearEdges();
   SDL_SetWindowTitle(win_, ("Birdstation - " + cur_.title).c_str());
-  Osd("Slot de estado: " + std::to_string(cfg_.slot + 1) + "   (F5 salva, F7 carrega)");
+  Osd("Slot de estado: " + std::to_string(cfg_.slot + 1) + "   (F5/R2 salva, F7/L2 carrega)");
   return true;
 }
 
@@ -588,7 +596,7 @@ void App::DrawGameMenu() {
   }
   if (ImGui::BeginMenu("Atalhos")) {
     ImGui::TextUnformatted("F1  mostrar/ocultar menu (ou botao Guide)");
-    ImGui::TextUnformatted("F5  salvar estado      F7  carregar estado");
+    ImGui::TextUnformatted("F5 / R2  salvar estado      F7 / L2  carregar estado");
     ImGui::TextUnformatted("F2 / F3  slot anterior / proximo");
     ImGui::TextUnformatted("F10  reiniciar         P  pausar");
     ImGui::TextUnformatted("Tab (segurar)  avanco rapido");
@@ -815,7 +823,7 @@ void App::DrawControlsWindow() {
       ImGui::EndTable();
     }
     ImGui::Spacing();
-    ImGui::TextDisabled("O analogico esquerdo tambem funciona como direcional. O 2o gamepad controla o Jogador 2.");
+    ImGui::TextDisabled("O analogico esquerdo tambem funciona como direcional. R2 salva e L2 carrega o estado (slot atual). O 2o gamepad controla o Jogador 2.");
     if (ImGui::Button("Restaurar padrao")) { input_.CancelCapture(); cfg_.ResetControls(); }
     ImGui::SameLine();
     if (ImGui::Button("Fechar")) showControls_ = false;

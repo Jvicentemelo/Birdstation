@@ -31,6 +31,11 @@ public:
   bool AnyPadButton(SDL_GameControllerButton b) const;
   void ClearEdges() { pressed_.clear(); }
 
+  // L2 / R2 (analog triggers) as one-shot buttons: R2 = save state, L2 = load state.
+  void Update();  // call once per frame
+  bool ConsumeSaveTrigger() { bool r = trigSave_; trigSave_ = false; return r; }
+  bool ConsumeLoadTrigger() { bool r = trigLoad_; trigLoad_ = false; return r; }
+
   static std::string KeyName(int scancode);
   static std::string PadButtonName(int button);
 
@@ -41,6 +46,7 @@ private:
 
   Config& cfg_;
   std::vector<Pad> pads_;
+  bool l2Down_ = false, r2Down_ = false, trigSave_ = false, trigLoad_ = false;
   int capBtn_ = -1;
   bool capPad_ = false;
   std::vector<SDL_GameControllerButton> pressed_;  // edge events since last PadPressed poll

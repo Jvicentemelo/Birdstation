@@ -64,6 +64,18 @@ bool Input::PadDown(const Pad& p, unsigned id) const {
   return false;
 }
 
+void Input::Update() {
+  bool l = false, r = false;
+  for (auto& p : pads_) {
+    if (SDL_GameControllerGetAxis(p.c, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 16000) l = true;
+    if (SDL_GameControllerGetAxis(p.c, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16000) r = true;
+  }
+  if (l && !l2Down_) trigLoad_ = true;
+  if (r && !r2Down_) trigSave_ = true;
+  l2Down_ = l;
+  r2Down_ = r;
+}
+
 int16_t Input::State(unsigned port, unsigned id) const {
   if (id >= unsigned(kNumButtons)) return 0;
   if (port == 0 && !Capturing()) {
