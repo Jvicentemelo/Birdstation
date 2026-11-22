@@ -1,0 +1,24 @@
+#include <winver.h>
+
+// ID 1 is the icon SDL2 uses for the window / taskbar.
+1 ICON "../assets/birdstation.ico"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,0,0,0
+ PRODUCTVERSION 1,0,0,0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "041604b0"
+    BEGIN
+      VALUE "FileDescription", "Birdstation - SNES frontend"
+      VALUE "ProductName", "Birdstation"
+      VALUE "OriginalFilename", "Birdstation.exe"
+      VALUE "FileVersion", "1.0.0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x416, 1200
+  END
+END

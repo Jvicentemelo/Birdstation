@@ -1,0 +1,17 @@
+# build
+build/
+out/
+dist/
+.vs/
+*.user
+CMakeUserPresets.json
+
+# user data created next to the exe (portable layout)
+/cores/*.dll
+/cores/*.so
+/roms/
+/covers/
+/saves/
+/states/
+/system/
+/config/
