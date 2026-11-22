@@ -149,12 +149,12 @@ namespace {
 struct Http {
   HINTERNET ses = nullptr, con = nullptr;
   DWORD status = 0, err = 0;  // last HTTP status / Win32 error
-  Http() {
+  explicit Http(const wchar_t* host) {
     ses = WinHttpOpen(L"Birdstation/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
                       WINHTTP_NO_PROXY_BYPASS, 0);
     if (ses) {
       WinHttpSetTimeouts(ses, 10000, 10000, 15000, 30000);
-      con = WinHttpConnect(ses, L"thumbnails.libretro.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
+      con = WinHttpConnect(ses, host, INTERNET_DEFAULT_HTTPS_PORT, 0);
     }
     if (!con) err = GetLastError();
   }
@@ -249,21 +249,25 @@ void Library::DownloadThread(std::vector<std::string> stems) {
   }
   auto L = [&](const std::string& s) { if (log) log << s << "\n"; };
 
-  Http http;
+  Http thumbs(L"thumbnails.libretro.com"), raw(L"raw.githubusercontent.com"), api(L"api.github.com");
   const std::string base = "/Nintendo%20-%20Super%20Nintendo%20Entertainment%20System/Named_Boxarts/";
+  const std::string repo = "Nintendo_-_Super_Nintendo_Entertainment_System";
+  const std::string rawBase = "/libretro-thumbnails/" + repo + "/master/Named_Boxarts/";
   std::vector<unsigned char> data;
 
-  // 1) directory listing -> fuzzy matching by title
+  // 1) list of available box art (GitHub tree of the libretro-thumbnails repo), used to match by title
   std::vector<covermatch::Entry> index;
-  if (http.Get(base, data)) {
-    index = covermatch::ParseIndex(std::string(data.begin(), data.end()));
-    L("Indice do servidor: " + std::to_string(index.size()) + " capas");
+  if (api.Get("/repos/libretro-thumbnails/" + repo + "/git/trees/master?recursive=1", data)) {
+    index = covermatch::ParseGithubTree(std::string(data.begin(), data.end()));
+    L("Indice (GitHub): " + std::to_string(index.size()) + " capas");
   } else {
-    L("Nao foi possivel ler o indice (HTTP " + std::to_string(http.status) + ", erro Win32 " + std::to_string(http.err) + ")");
+    L("Indice GitHub indisponivel (HTTP " + std::to_string(api.status) + ", erro Win32 " + std::to_string(api.err) + ")");
   }
-  if (index.empty() && http.status == 0) {
-    SetNote("Sem acesso ao servidor de capas (erro " + std::to_string(http.err) + "). Verifique a internet/firewall.");
+  if (index.empty() && thumbs.Get(base, data)) {
+    index = covermatch::ParseIndex(std::string(data.begin(), data.end()));
+    L("Indice (servidor): " + std::to_string(index.size()) + " capas");
   }
+  if (index.empty()) L("Sem indice: usando apenas o nome exato do arquivo da ROM.");
 
   int missing = 0;
   for (const auto& stem : stems) {
@@ -271,7 +275,7 @@ void Library::DownloadThread(std::vector<std::string> stems) {
     std::vector<std::string> paths;  // URL paths to try, best first
     std::string matched;
     int pick = index.empty() ? -1 : covermatch::Pick(index, stem);
-    if (pick >= 0) { paths.push_back(base + index[pick].href); matched = index[pick].name; }
+    if (pick >= 0) { paths.push_back(index[pick].href); matched = index[pick].name; }
     // 2) fallbacks: exact name, then name + " (USA)"
     std::string clean = stem;
     for (size_t b; (b = clean.find('[')) != std::string::npos;) {
@@ -279,13 +283,23 @@ void Library::DownloadThread(std::vector<std::string> stems) {
       clean.erase(b, e == std::string::npos ? std::string::npos : e - b + 1);
     }
     while (!clean.empty() && clean.back() == ' ') clean.pop_back();
-    paths.push_back(base + covermatch::UrlName(clean) + ".png");
-    if (clean.find('(') == std::string::npos) paths.push_back(base + covermatch::UrlName(clean + " (USA)") + ".png");
+    paths.push_back(covermatch::UrlName(clean) + ".png");
+    if (clean.find('(') == std::string::npos) paths.push_back(covermatch::UrlName(clean + " (USA)") + ".png");
 
-    bool got = false;
+    // each candidate is tried on thumbnails.libretro.com, then on raw.githubusercontent.com
+    std::vector<std::pair<Http*, std::string>> tries;
     for (const auto& pth : paths) {
+      tries.push_back({&thumbs, base + pth});
+      tries.push_back({&raw, rawBase + pth});
+    }
+    bool got = false;
+    DWORD lastStatus = 0, lastErr = 0;
+    for (auto& t : tries) {
       if (dlCancel_) break;
-      if (http.Get(pth, data) && data.size() > 64) {
+      bool okGet = t.first->Get(t.second, data);
+      lastStatus = t.first->status;
+      lastErr = t.first->err;
+      if (okGet && data.size() > 64) {
         std::ofstream f(P(coversDir_) / P(stem + ".png"), std::ios::binary | std::ios::trunc);
         f.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
         bool wrote = bool(f);
@@ -304,7 +318,7 @@ void Library::DownloadThread(std::vector<std::string> stems) {
     }
     if (!got && !dlCancel_) {
       ++missing;
-      L("FALTA  " + stem + "  (HTTP " + std::to_string(http.status) + ", erro " + std::to_string(http.err) + ")");
+      L("FALTA  " + stem + "  (HTTP " + std::to_string(lastStatus) + ", erro " + std::to_string(lastErr) + ")");
     }
     ++dlDone_;
   }

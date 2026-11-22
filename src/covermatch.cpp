@@ -132,6 +132,51 @@ int Pick(const std::vector<Entry>& entries, const std::string& romStem) {
   return best;
 }
 
+std::string UrlEncode(const std::string& name) {
+  std::string out;
+  static const char* hex = "0123456789ABCDEF";
+  for (unsigned char c : name) {
+    if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~' || c == '(' || c == ')' || c == '!' || c == ',' || c == '\'')
+      out += char(c);
+    else { out += '%'; out += hex[c >> 4]; out += hex[c & 15]; }
+  }
+  return out;
+}
+
+static void AppendUtf8(std::string& s, unsigned cp) {
+  if (cp < 0x80) s += char(cp);
+  else if (cp < 0x800) { s += char(0xC0 | (cp >> 6)); s += char(0x80 | (cp & 0x3F)); }
+  else { s += char(0xE0 | (cp >> 12)); s += char(0x80 | ((cp >> 6) & 0x3F)); s += char(0x80 | (cp & 0x3F)); }
+}
+
+std::vector<Entry> ParseGithubTree(const std::string& json, const std::string& folder) {
+  std::vector<Entry> v;
+  const std::string tag = "\"path\":\"" + folder;
+  size_t p = 0;
+  while ((p = json.find(tag, p)) != std::string::npos) {
+    p += tag.size();
+    std::string name;
+    while (p < json.size() && json[p] != '"') {
+      char c = json[p++];
+      if (c == '\\' && p < json.size()) {
+        char e = json[p++];
+        if (e == 'u' && p + 4 <= json.size()) { AppendUtf8(name, unsigned(std::stoul(json.substr(p, 4), nullptr, 16))); p += 4; }
+        else if (e == 'n') name += '\n';
+        else name += e;  // \" \\ \/
+      } else {
+        name += c;
+      }
+    }
+    if (name.size() < 5 || Lower(name.substr(name.size() - 4)) != ".png" || name.find('/') != std::string::npos) continue;
+    Entry e;
+    e.name = name.substr(0, name.size() - 4);
+    e.href = UrlEncode(name);
+    e.key = Key(e.name);
+    v.push_back(std::move(e));
+  }
+  return v;
+}
+
 std::string UrlName(std::string name) {
   for (char& c : name)
     if (std::string("&*/:`<>?\\|\"").find(c) != std::string::npos) c = '_';
